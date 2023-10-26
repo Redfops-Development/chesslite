@@ -46,6 +46,7 @@ fn setup_client(mut commands: Commands, asset_server: Res<AssetServer>, mut text
 
 
     commands.spawn(Camera2dBundle::default());
+
     let mut tiles: Vec<[Entity;8]> = Vec::new();
     commands
     .spawn(SpriteBundle{
@@ -82,6 +83,39 @@ fn setup_client(mut commands: Commands, asset_server: Res<AssetServer>, mut text
                 file.push(child);
             }
             tiles.push(file.try_into().expect("Trying to convert vec to array"));
+        }
+
+        let font = asset_server.load("fonts/FiraSans-Bold.ttf");
+        let text_style = TextStyle {
+            font: font.clone(),
+            font_size: 60.0,
+            color: Color::WHITE,
+        };
+        let text_alignment = TextAlignment::Center;
+
+        for x in 0..8 {
+            let x_coord = (x as f32 * 0.125) - 0.4375;
+            let y_coord = -0.55;
+            parent.spawn(Text2dBundle {
+                text: Text::from_section((97u8 + x) as char, text_style.clone()).with_alignment(text_alignment),
+                transform: Transform { 
+                    translation: Vec3::new(x_coord, y_coord,3.0),
+                    scale: Vec3::new(0.001,0.001,1.0),
+                    ..default()
+                },
+                ..default()
+            }
+            );
+            parent.spawn(Text2dBundle {
+                text: Text::from_section((49u8 + x) as char, text_style.clone()).with_alignment(text_alignment),
+                transform: Transform { 
+                    translation: Vec3::new(y_coord, x_coord,3.0),
+                    scale: Vec3::new(0.001,0.001,1.0),
+                    ..default()
+                },
+                ..default()
+            }
+            );
         }
     })
     .insert(BoardEntity{tiles: tiles.try_into().expect("Should initialize with correct size")});

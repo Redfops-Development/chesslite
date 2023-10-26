@@ -1,8 +1,8 @@
 //In percent
 pub const MARGIN_LEFT: f32 = 10.0;
 pub const MARGIN_RIGHT: f32 = 20.0;
-pub const MARGIN_BOTTOM: f32 = 5.0;
-pub const MARGIN_TOP: f32 = 5.0;
+pub const MARGIN_BOTTOM: f32 = 10.0;
+pub const MARGIN_TOP: f32 = 10.0;
 
 use bevy::prelude::*;
 use bevy::window::WindowResized;

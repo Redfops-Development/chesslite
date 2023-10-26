@@ -134,7 +134,7 @@ impl Board {
                 PieceColor::Black => 0usize,
             };
             if to.0 != promotion_rank {return false;}
-            return true;
+            return self.is_legal_move(from, to);
         }
         return false;
     }
