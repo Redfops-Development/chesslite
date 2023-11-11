@@ -48,7 +48,7 @@ pub fn promotion_choice(
     board_ent: Query<(&BoardEntity, Entity)>,
     asset_server: Res<AssetServer>,
 ) {
-    if let Some(event) = er_promotion.iter().last() {
+    if let Some(event) = er_promotion.read().last() {
         let (board_ent, board_entity) = board_ent.get_single().unwrap();
         let textures = match &texture_holder.textures {
             Some(x) => x,
@@ -126,7 +126,7 @@ pub fn promotion_choose (
         {
             for (option, gtransform, image_handle, entity) in q_option.iter() {
                 let transform = gtransform.compute_transform();
-                let image_dimensions = assets.get(image_handle).unwrap().size();
+                let image_dimensions = assets.get(image_handle).unwrap().size().as_vec2();
                 let scaled_image_dimension = image_dimensions * transform.scale.truncate();
                 let bounding_box = Rect::from_center_size(gtransform.translation().truncate(), scaled_image_dimension);
                 

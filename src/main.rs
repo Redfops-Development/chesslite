@@ -9,7 +9,6 @@ use bevy::window::WindowResized;
 use crate::chess::{ChessPluginClient,BoardEntity};
 
 pub mod chess;
-pub mod drag;
 fn main() {
     App::new()
     .add_plugins((DefaultPlugins,ChessPluginClient))
@@ -18,7 +17,7 @@ fn main() {
 }
 
 fn window_resized_event(mut events: EventReader<WindowResized>, mut boardents: Query<&mut Transform, With<BoardEntity>>) {
-    let event: Option<&WindowResized> = events.iter().last(); // might be able to unwrap here idk
+    let event: Option<&WindowResized> = events.read().last(); // might be able to unwrap here idk
     let resized: &WindowResized = match event {
         Some(x) => x,
         None => return
