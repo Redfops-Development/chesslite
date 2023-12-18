@@ -5,13 +5,17 @@ pub const MARGIN_BOTTOM: f32 = 10.0;
 pub const MARGIN_TOP: f32 = 10.0;
 
 use bevy::prelude::*;
+use rand::Rng;
 use bevy::window::WindowResized;
-use crate::chess::{ChessPluginClient,BoardEntity};
+use crate::chess::{ChessPluginClient, ChessPluginSettings, BoardEntity};
+use crate::chess::board::PieceColor;
 
 pub mod chess;
 fn main() {
+    let mut rng = rand::thread_rng();
+    let color = if rng.gen_bool(0.5) {PieceColor::White} else {PieceColor::Black};
     App::new()
-    .add_plugins((DefaultPlugins,ChessPluginClient))
+    .add_plugins((DefaultPlugins,ChessPluginClient{ settings: ChessPluginSettings {color, engine: true}}))
     .add_systems(Update, window_resized_event)
     .run();
 }

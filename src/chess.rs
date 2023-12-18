@@ -8,7 +8,14 @@ pub mod promotion;
 
 pub mod arrow;
 
-use bevy::prelude::*;
+use std::f32::consts::PI;
+
+use bevy::{
+    prelude::*,
+    tasks::{block_on, AsyncComputeTaskPool, Task},
+};
+
+use futures_lite::future;
 
 use bevy_dragndrop::*;
 
@@ -19,9 +26,21 @@ use crate::chess::arrow::*;
 
 use bevy_prototype_lyon::prelude::*;
 
+#[derive(Component)]
+struct MoveFetch(Task<Board>);
 
+#[derive(Event)]
+pub struct AwaitMove;
 
-pub struct ChessPluginClient;
+pub struct ChessPluginClient{
+    pub settings: ChessPluginSettings
+}
+
+#[derive(Resource,Clone,Copy)]
+pub struct ChessPluginSettings{
+    pub color: PieceColor,
+    pub engine: bool,
+}
 
 impl Plugin for ChessPluginClient {
     fn build(&self, app: &mut App) {
@@ -29,16 +48,57 @@ impl Plugin for ChessPluginClient {
         .add_plugins(DragPlugin)
         .add_plugins(PromotionPlugin)
         .add_plugins(ShapePlugin)
+        .insert_resource(self.settings)
         .insert_resource(Board::new())
         .insert_resource(PieceTextureHolder{textures: None})
         .insert_resource(Msaa::Sample4)
         .add_event::<BoardChange>()
+        .add_event::<AwaitMove>()
         .add_systems(Startup, setup_client)
-        .add_systems(Update, (updateboardstate,on_dropped,on_dragged,draw_arrows.after(on_hovered),on_hovered,clear_arrows.after(on_dropped)));
+        .add_systems(Update, (updateboardstate,on_dropped,on_dragged,draw_arrows.after(on_hovered),on_hovered,get_opposing_move,clear_arrows.after(on_dropped)));
     }
 }
 
-fn setup_client(mut commands: Commands, asset_server: Res<AssetServer>, mut texture_holder: ResMut<PieceTextureHolder>, mut ev_board: EventWriter<BoardChange>){
+fn get_opposing_move(
+    mut commands: Commands, 
+    mut board: ResMut<Board>, 
+    mut er_awaitmove: EventReader<AwaitMove>, 
+    mut ew_board: EventWriter<BoardChange>, 
+    settings: Res<ChessPluginSettings>,
+    mut q_fetch: Query<(&mut MoveFetch, Entity)>,
+){
+    for (mut task, entity) in &mut q_fetch {
+        if let Some(new_board) = block_on(future::poll_once(&mut task.0)){
+            *board = new_board;
+            ew_board.send(BoardChange);
+            commands.entity(entity).despawn();
+        }
+    }
+    let thread_pool = AsyncComputeTaskPool::get();
+    for _event in er_awaitmove.read() {
+        let entity = commands.spawn_empty().id();
+        let mut board_clone = board.clone();
+        let settings_clone = settings.clone();
+        let task = thread_pool.spawn(async move {
+            if settings_clone.engine {
+                board_clone.engine_move();
+            }
+            board_clone
+        });
+
+        commands.entity(entity).insert(MoveFetch(task));
+    }
+}
+
+fn setup_client(
+    mut commands: Commands, 
+    asset_server: Res<AssetServer>, 
+    mut texture_holder: ResMut<PieceTextureHolder>, 
+    mut ev_board: EventWriter<BoardChange>, 
+    settings: Res<ChessPluginSettings>, 
+    board: Res<Board>,
+    mut ew_awaitmove: EventWriter<AwaitMove>,
+){
     texture_holder.textures = Some(PieceTextures { 
         black_king: asset_server.load("textures/pieces/black/king.png"),
         black_queen: asset_server.load("textures/pieces/black/queen.png"), 
@@ -63,7 +123,7 @@ fn setup_client(mut commands: Commands, asset_server: Res<AssetServer>, mut text
         transform: Transform {
             scale: Vec3::new(100.0,100.0,1.0),
             translation: Vec3::new(0.0,0.0,0.0),
-            ..default()
+            rotation: Quat::from_rotation_z(if let PieceColor::Black = settings.color {PI} else {0.}),
         },
         ..default()
     })
@@ -79,7 +139,7 @@ fn setup_client(mut commands: Commands, asset_server: Res<AssetServer>, mut text
                     transform: Transform {
                         scale: Vec3::new(0.125,0.125,1.0),
                         translation: Vec3::new(x_coord,y_coord,1.0),
-                        ..default()
+                        rotation: Quat::from_rotation_z(if let PieceColor::Black = settings.color {PI} else {0.}),
                     },
                     sprite: Sprite{
                         color: col,
@@ -104,14 +164,18 @@ fn setup_client(mut commands: Commands, asset_server: Res<AssetServer>, mut text
         let text_alignment = TextAlignment::Center;
 
         for x in 0..8 {
-            let x_coord = (x as f32 * 0.125) - 0.4375;
-            let y_coord = -0.55;
+            let mut x_coord = (x as f32 * 0.125) - 0.4375;
+            let mut y_coord = -0.55;
+            if let PieceColor::Black = settings.color {
+                x_coord = -x_coord;
+                y_coord = -y_coord;
+            }
             parent.spawn(Text2dBundle {
                 text: Text::from_section((97u8 + x) as char, text_style.clone()).with_alignment(text_alignment),
                 transform: Transform { 
                     translation: Vec3::new(x_coord, y_coord,3.0),
                     scale: Vec3::new(0.001,0.001,1.0),
-                    ..default()
+                    rotation: Quat::from_rotation_z(if let PieceColor::Black = settings.color {PI} else {0.}),
                 },
                 ..default()
             }
@@ -121,7 +185,7 @@ fn setup_client(mut commands: Commands, asset_server: Res<AssetServer>, mut text
                 transform: Transform { 
                     translation: Vec3::new(y_coord, x_coord,3.0),
                     scale: Vec3::new(0.001,0.001,1.0),
-                    ..default()
+                    rotation: Quat::from_rotation_z(if let PieceColor::Black = settings.color {PI} else {0.}),
                 },
                 ..default()
             }
@@ -131,6 +195,13 @@ fn setup_client(mut commands: Commands, asset_server: Res<AssetServer>, mut text
     .insert(BoardEntity{tiles: tiles.try_into().expect("Should initialize with correct size")});
 
     ev_board.send(BoardChange);
+
+    println!("{}", board.fen());
+
+    if let PieceColor::Black = settings.color {
+        ew_awaitmove.send(AwaitMove);
+    }
+    
 }
 
 
@@ -208,7 +279,9 @@ fn updateboardstate(
     texture_holder: Res<PieceTextureHolder>, 
     tile_query: Query<&Children,With<TileEntity>>, 
     mut er_board: EventReader<BoardChange>,
-    asset_server: Res<AssetServer>
+    asset_server: Res<AssetServer>,
+    settings: Res<ChessPluginSettings>,
+    mut ew_awaitmove: EventWriter<AwaitMove>,
 ){
     let check_image: Handle<Image> = asset_server.load("textures/check.png");
     for _ in er_board.read() {
@@ -262,6 +335,7 @@ fn updateboardstate(
                     parent.spawn(SpriteBundle{
                         transform: Transform {
                             scale: Vec3::new(PIECE_SCALE,PIECE_SCALE,1.0),
+                            //rotation: Quat::from_rotation_z(if let PieceColor::Black = settings.color {PI} else {0.}),
                             translation: Vec3::new(0.0,0.0,2.0),
                             ..default()
                         },
@@ -312,6 +386,9 @@ fn updateboardstate(
                 });
             }
         }
+        if board.to_move() != settings.color && settings.engine {
+            ew_awaitmove.send(AwaitMove);
+        }
     }
 }
 
@@ -326,12 +403,13 @@ fn on_dropped(
     mut ew_promotion: EventWriter<PromotionChoiceEvent>,
     mut er_promotion: EventReader<PromotionChosenEvent>,
     q_arrow: Query<&ArrowDraggable>,
+    settings: Res<ChessPluginSettings>
 ) {
     let mut events = 0;
     for event in er_drop.read() {
         if handle_arrow_dropped(&mut commands, event, &mut transforms, &q_arrow) {continue;}
         if let Some(received) = event.received {
-            if handle_piece_dropped(event, received, &mut board, &piece_ents,  &tile_ents, &mut ew_promotion) {events += 1;}
+            if handle_piece_dropped(event, received, &mut board, &piece_ents,  &tile_ents, &mut ew_promotion, &settings) {events += 1;}
 
             
 
@@ -357,6 +435,7 @@ fn handle_piece_dropped(
     piece_ents: &Query<(&PieceEntity,&Parent)>,
     tile_ents: &Query<&TileEntity>,
     ew_promotion: &mut EventWriter<PromotionChoiceEvent>,
+    settings: &Res<ChessPluginSettings>,
 ) -> bool {
     let tile_ent = tile_ents.get(received).unwrap();
     let Ok((piece_ent, parent)) = piece_ents.get(event.dropped) else {
@@ -367,6 +446,9 @@ fn handle_piece_dropped(
         board.tiles[parent_tile.index_x][parent_tile.index_y] = None;
         board.tiles[tile_ent.index_x][tile_ent.index_y] = Some(piece_ent.piece);
     }*/
+    if piece_ent.piece.color != settings.color {
+        return true;
+    }
     if board.can_promote((parent_tile.index_x,parent_tile.index_y), (tile_ent.index_x,tile_ent.index_y)) {
         ew_promotion.send(PromotionChoiceEvent { color: piece_ent.piece.color, from: (parent_tile.index_x,parent_tile.index_y), to: (tile_ent.index_x,tile_ent.index_y) })
     } else {

@@ -9,7 +9,8 @@ edition = "2021"
 bevy = "0.12.0"
 bevy_dragndrop = "0.2.0"
 bevy_prototype_lyon = "0.10.0"
-uci = "0.1.3"
+futures-lite = "2.1.0"
+rand = "0.8.5"
 
 # Enable a small amount of optimization in debug mode
 [profile.dev]

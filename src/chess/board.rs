@@ -1,6 +1,8 @@
-use std::ops::Not;
+use std::{ops::Not, io::{Write,Read}, process::{Stdio, ChildStdout}};
 
 use bevy::prelude::*;
+
+use std::process::Command;
 
 #[derive(Clone,Copy,PartialEq,Debug)]
 pub enum GameOverState{
@@ -21,10 +23,29 @@ pub enum PieceType{
     Pawn
 }
 
+impl PieceType{
+    pub fn to_char(&self) -> char {
+        match self {
+            PieceType::King => 'k',
+            PieceType::Queen => 'q',
+            PieceType::Rook => 'r',
+            PieceType::Bishop => 'b',
+            PieceType::Knight => 'n',
+            PieceType::Pawn => 'p'
+        }
+    }
+}
+
 #[derive(Clone,Copy,PartialEq,Debug)]
 pub enum PieceColor{
     Black,
     White
+}
+
+impl PieceColor{
+    fn to_char(&self) -> char {
+        if let PieceColor::White = self {'w'} else {'b'}
+    }
 }
 
 impl Not for PieceColor{
@@ -44,6 +65,24 @@ pub struct Piece {
     pub color: PieceColor
 }
 
+impl Piece{
+    fn to_char(&self) -> char {
+        let c = match self.piece {
+            PieceType::King => 'k',
+            PieceType::Queen => 'q',
+            PieceType::Rook => 'r',
+            PieceType::Bishop => 'b',
+            PieceType::Knight => 'n',
+            PieceType::Pawn => 'p'
+        };
+        if let PieceColor::White = self.color {
+            return c.to_uppercase().next().unwrap();
+        }
+        return c;
+    }
+}
+
+
 pub struct CastleCheck {
     pub cancastle: bool,
     pub rooksource: Option<(usize,usize)>,
@@ -60,12 +99,137 @@ impl CastleCheck {
     }
 }
 
+pub struct SimpleMove {
+    pub from: (usize, usize),
+    pub to: (usize, usize),
+    pub promotion: Option<PieceType>,
+}
+
+impl SimpleMove {
+    pub fn from_algebraic(algebraic: &str) -> Self{
+        let mut chars = algebraic.chars();
+        let a = chars.next().unwrap() as u32 - 97;
+        let b = chars.next().unwrap().to_digit(10).unwrap() - 1;
+        let c = chars.next().unwrap() as u32 - 97;
+        let d = chars.next().unwrap().to_digit(10).unwrap() - 1;
+        
+        if let Some(e) = chars.next() {
+            let ptype = match e {
+                'q' => PieceType::Queen,
+                'n' => PieceType::Knight,
+                'k' => PieceType::Knight,
+                'b' => PieceType::Bishop,
+                'r' => PieceType::Rook,
+                _ => PieceType::Queen,
+            };
+            return Self {from: (b as usize, a as usize), to: (d as usize, c as usize), promotion: Some(ptype)};
+        }
+        return Self {from: (b as usize, a as usize), to: (d as usize, c as usize), promotion: None};
+    }
+    pub fn to_algebraic(&self) -> String {
+        let mut out = String::new();
+        out.push(((self.from.1 + 97) as u8) as char);
+        out += &(self.from.0 + 1).to_string();
+        out.push(((self.to.1 + 97) as u8) as char);
+        out += &(self.to.0 + 1).to_string();
+        if let Some(piece) = self.promotion {
+            out.push(piece.to_char())
+        }
+        return out;
+    }
+}
+
 #[derive(Clone,Copy)]
 pub struct Move {
     pub from: (usize, usize),
     pub to: (usize, usize),
     pub color: PieceColor,
     pub piece: Piece,
+    pub capture: bool,
+}
+
+/* 
+impl Move {
+    pub fn to_algebraic(&self) -> String {
+        let out1 = toalgebraicsquare(self.from);
+        let out2 = toalgebraic
+    }
+}*/
+
+pub fn toalgebraicsquare(square: (usize, usize)) -> String {
+    let mut out = String::new();
+    out.push(((square.1 + 97) as u8) as char);
+    out += &(square.0 + 1).to_string();
+    return out;
+}
+
+fn read_lines(stdout: Option<&mut ChildStdout>) -> String{
+    let mut strings = String::new();
+    let stdout = stdout.unwrap();
+    loop {
+        let mut s = String::new();
+        let mut buf: Vec<u8> = vec![0];
+        
+        loop {
+            stdout.read(&mut buf).unwrap();
+            s.push(buf[0] as char);
+            if buf[0] == '\n' as u8 {
+                break
+            }
+        }
+        if s.starts_with("bestmove") {
+            return s;
+        }
+        strings += &s;
+    }
+}
+
+#[derive(Clone,Copy)]
+pub struct CastleAvailability{
+    pub white_kingside: bool,
+    pub white_queenside: bool,
+    pub black_kingside: bool,
+    pub black_queenside: bool,
+}
+
+impl CastleAvailability {
+    pub fn new() -> Self {
+        CastleAvailability {
+            white_kingside: true,
+            white_queenside: true,
+            black_kingside: true,
+            black_queenside: true,
+        }
+    }
+
+    pub fn set_availability(&mut self, color: PieceColor, kingside: bool, availability: bool){
+        match color {
+            PieceColor::Black => {
+                if kingside {self.black_kingside = availability} else {self.black_queenside = availability}
+            },
+            PieceColor::White => {
+                if kingside {self.white_kingside = availability} else {self.white_queenside = availability}
+            }
+        }
+    }
+
+    pub fn any_castle(&self, color: PieceColor) -> bool {
+        match color {
+            PieceColor::Black => {
+                self.black_kingside || self.black_queenside
+            },
+            PieceColor::White => {
+                self.white_kingside || self.white_queenside
+            }
+        }
+    }
+
+    pub fn check_availability(&self, color: PieceColor, kingside: bool) -> bool {
+        match color {
+            PieceColor::Black => {if kingside {self.black_kingside} else {self.black_queenside}},
+            PieceColor::White => {if kingside {self.white_kingside} else {self.white_queenside}}
+        }
+    }
 }
 
 #[derive(Resource,Clone)]
@@ -73,6 +237,9 @@ pub struct Board {
     pub tiles: [[Option<Piece>;8];8],
     pub lastmove: Option<Move>,
     pub movelist: Vec<Move>,
+    pub halfmoves: usize,
+    pub fullmoves: usize,
+    pub castles: CastleAvailability,
 }
 
 impl Board {
@@ -90,7 +257,132 @@ impl Board {
             ],
             lastmove: None,
             movelist: Vec::new(),
+            halfmoves: 0usize,
+            fullmoves: 1usize,
+            castles: CastleAvailability::new(),
         }
+    }
+
+    pub fn fen(&self) -> String {
+        let mut out = String::new();
+        for i in (0..8).rev() {
+            let rank = self.tiles[i];
+            let mut num = 0;
+            let mut empty = 0;
+            for square in rank {
+                if let Some(piece) = square {
+                    if empty > 0 {
+                        out += &empty.to_string();
+                        empty = 0;
+                    }
+                    out.push(piece.to_char());
+                } else {
+                    empty += 1;
+                    if num == 7 {
+                        out += &empty.to_string();
+                    }
+                }
+                num += 1;
+            }
+            if i != 0 {
+                out.push('/');
+            }
+        }
+        out += " ";
+        out.push(self.to_move().to_char());
+        out += " ";
+
+        let chars = ['K','Q','k','q'];
+
+        let mut anycastles = false;
+
+        for char in chars {
+            match char {
+                'K' => {if self.castles.white_kingside {anycastles = true; out.push(char)}},
+                'Q' => {if self.castles.white_queenside {anycastles = true; out.push(char)}},
+                'k' => {if self.castles.black_kingside {anycastles = true; out.push(char)}},
+                'q' => {if self.castles.black_queenside {anycastles = true; out.push(char)}},
+                _ => continue
+            }
+        }
+
+        if !anycastles {
+            out.push('-');
+        }
+
+        out += " ";
+
+        let mut en_passant = "-".to_string();
+
+        if let Some(lastmove) = self.lastmove {
+            if [1usize,6usize].contains(&lastmove.from.0) && [3usize,4usize].contains(&lastmove.to.0) {
+                if let Some(piece) = self.tiles[lastmove.to.0][lastmove.to.1] {
+                    if let PieceType::Pawn = piece.piece {
+                        let mut en_passant_square = lastmove.to;
+                        if lastmove.to.0 == 3usize {
+                            en_passant_square.0 = 2;
+                            en_passant = toalgebraicsquare(en_passant_square);
+                        } else {
+                            en_passant_square.0 = 5;
+                            en_passant = toalgebraicsquare(en_passant_square);
+                        }
+                    }
+                }
+            }
+        }
+
+        out += &en_passant;
+
+        out += " ";
+
+        out += &self.halfmoves.to_string();
+
+        out += " ";
+
+        out += &self.fullmoves.to_string();
+
+        return out;
+    }
+
+    pub fn engine_move(&mut self) {
+        /*let mut command = Command::new("stockfish/stockfish.exe").spawn().unwrap();
+        let mut stdin = command.stdin.take().unwrap();
+        let mut stdout = command.stdout.take().unwrap();
+        stdin.write_all("isready".as_bytes()).unwrap();
+        let mut ready = String::new();
+        stdout.read_to_string(&mut ready).unwrap();
+        println!("{}",ready);
+
+        stdin.write_all(("position fen ".to_owned() + &self.fen()).as_bytes()).unwrap();
+        let mut ready2 = String::new();
+        stdout.read_to_string(&mut ready2).unwrap();
+        println!("{}",ready2);
+
+        stdin.write_all("go movetime 1000".as_bytes()).unwrap();
+        let mut out = String::new();
+        stdout.read_to_string(&mut out).unwrap();*/
+
+        let mut cmd = Command::new("stockfish/stockfish.exe")
+                          .stdin(Stdio::piped())
+                          .stdout(Stdio::piped())
+                          .spawn()
+                          .expect("Unable to run engine");
+        //let s = read_line(cmd.stdout.as_mut());
+        //println!("{}",s);
+        let fen = self.fen();
+        cmd.stdin.as_mut().unwrap().write_fmt(format_args!("isready\n")).unwrap();
+        cmd.stdin.as_mut().unwrap().write_fmt(format_args!("position fen {fen}\n")).unwrap();
+        cmd.stdin.as_mut().unwrap().write_fmt(format_args!("go movetime 1000\n")).unwrap();
+        let s = read_lines(cmd.stdout.as_mut());
+    
+        let out = s.split(' ').nth(1).unwrap();
+
+        //let out = String::from_utf8_lossy(&output);
+        println!("output {}", out);
+        let bmove = SimpleMove::from_algebraic(&out);
+        let promote = if let Some(piece) = bmove.promotion {Some(Piece{piece, color: self.to_move()})} else {None};
+        println!("{:?},{:?}",bmove.from,bmove.to);
+        self.make_move(bmove.from,bmove.to,promote);
     }
 
     pub fn is_gameover(&self) -> GameOverState {
@@ -164,11 +456,46 @@ impl Board {
                 if let Some(promote_to) = promote {
                     if self.can_promote(from, to) {dest_piece = promote_to;}
                 }
+
+                //Is capture?
+                let captured = if let Some(_) = self.tiles[to.0][to.1] {true} else {false};
+
+                //Update halfmove count
+                if captured || piece.piece == PieceType::Pawn {
+                    self.halfmoves = 0;
+                } else {
+                    self.halfmoves += 1;
+                }
+
+                //Update fullmove count
+                if let PieceColor::Black = piece.color {
+                    self.fullmoves += 1;
+                }
+
+                //Update castle availability
+                if self.castles.any_castle(piece.color) && [PieceType::King,PieceType::Rook].contains(&piece.piece) {
+                    //Get rook starting squares for the specific side.
+                    let kingside_rook = if let PieceColor::Black = piece.color {(7usize,7usize)} else {(0usize, 7usize)};
+                    let queenside_rook = if let PieceColor::Black = piece.color {(7usize,0usize)} else {(0usize, 0usize)};
+
+                    //If king moves at all, no more castling on either side.
+                    if let PieceType::King = piece.piece {
+                        self.castles.set_availability(piece.color, true, false);
+                        self.castles.set_availability(piece.color, false, false);
+                    } else { //Otherwise if a rook moves from its starting position, no more castling on that side.
+                        if from == kingside_rook {
+                            self.castles.set_availability(piece.color, true, false);
+                        }
+                        if from == queenside_rook {
+                            self.castles.set_availability(piece.color, false, false);
+                        }
+                    }
+                }
                 
                 self.tiles[to.0][to.1] = Some(dest_piece);
                 self.tiles[from.0][from.1] = None;
 
-                let thismove = Move{from,to,color:piece.color,piece};
+                let thismove = Move{from,to,color:piece.color,piece, capture:captured};
                 self.lastmove = Some(thismove);
                 self.movelist.push(thismove);
             }
@@ -197,14 +524,14 @@ impl Board {
                 (7usize,6usize) => ((7usize,7usize), (7usize,5usize), 1),
                 _ => return CastleCheck::new(false),
             };
-
-            let kingrook = [from,rook];
             
             //If the king or rook has moved at all, castling is illegal.
-            for pastmove in &self.movelist {
-                if kingrook.contains(&pastmove.from) {
-                    return CastleCheck::new(false);
-                }
+            if to.1 == 2usize && !self.castles.check_availability(piece.color, false) {
+                return CastleCheck::new(false)
+            }
+
+            if to.1 == 6usize && !self.castles.check_availability(piece.color, true) {
+                return CastleCheck::new(false)
             }
             
             //Check the squares between us and our destination, inclusive of the destination.
