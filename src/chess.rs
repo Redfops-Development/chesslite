@@ -163,12 +163,14 @@ fn setup_client(
         };
         let text_alignment = TextAlignment::Center;
 
-        for x in 0..8 {
+        for x_base in 0..8 {
+            let mut x = x_base;
             let mut x_coord = (x as f32 * 0.125) - 0.4375;
             let mut y_coord = -0.55;
             if let PieceColor::Black = settings.color {
                 x_coord = -x_coord;
                 y_coord = -y_coord;
+                x = 7 - x;
             }
             parent.spawn(Text2dBundle {
                 text: Text::from_section((97u8 + x) as char, text_style.clone()).with_alignment(text_alignment),
